@@ -1,0 +1,6 @@
+*.rds
+.Rhistory
+.RData
+.Rproj.user/
+results/
+cohort_analysis.html

@@ -1,0 +1,224 @@
+---
+title: "Cohort analysis of human IPF lungs using MatriSpace in R"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(message = FALSE, warning = FALSE, fig.width = 7, fig.height = 5,
+                     dev = c("png", "pdf"), dpi = 300, fig.path = "results/panels/")
+```
+
+## 2.1. Set up the R environment and load the cohort data
+
+2.1.1. Install R (v4.6.1), Seurat (v5.5.1) and the MatriSpace R package (v0.3.0).
+
+```{r install, eval=FALSE}
+source("install.R")
+```
+
+2.1.2. Load the packages and helper functions into the R environment.
+
+```{r load}
+library(Seurat)
+library(matrispace)
+source("cohort_helpers.R")
+```
+
+2.1.3. Load the cohort data as a Seurat object.
+
+```{r read}
+obj <- readRDS("IPF_cohort_MatriSpace.rds")
+```
+
+2.1.4. Inspect the data object and examine the number of sections and different lung conditions.
+
+```{r inspect}
+table(obj$lung, obj$condition)
+```
+
+## 2.2. Score the matrisome in the cohort data
+
+2.2.1. Calculate the matrisome scores for the six major categories.
+
+```{r score}
+obj <- score_matrisome(obj, include = list_matrisome_signatures(level = "category")$key, assay = "Spatial")
+```
+
+2.2.2. Add the scores to the object metadata.
+
+```{r scores-meta}
+scores <- t(as.matrix(get_matrisome_scores(obj)))
+colnames(scores) <- gsub("-", "_", colnames(scores))
+obj <- AddMetaData(obj, as.data.frame(scores))
+```
+
+## 2.3. Compare the matrisome scores between control and IPF samples
+
+2.3.1. Calculate the average scores across all spots per section, per tissue block and per sample.
+
+```{r lung-scores}
+cats <- c("collagens", "proteoglycans", "ecm_glycoproteins",
+          "ecm_regulators", "secreted_factors", "ecm_affiliated_proteins")
+lung_scores <- summarise_by_lung(obj, features = cats)
+```
+
+2.3.2. Compare the control vs IPF samples using a permutation test.
+
+```{r score-stats}
+score_stats <- permutation_test(lung_scores, features = cats, group = "condition")
+score_stats
+```
+
+2.3.3. Plot the sample level scores (Figure 4B).
+
+```{r fig4b}
+plot_heatmap(t(as.matrix(lung_scores[, cats])), scale_by = "row")
+```
+
+## 2.4. Examine the spatial pattern of the matrisome scores
+
+Moran's I is calculated with binary neighbour weights, as in Figure 4C.
+
+2.4.1. Build a spatial graph connecting each spot to its neighbours.
+
+```{r graph}
+obj <- build_spatial_graph(obj, method = "radius", radius = 120, coordinate_units = "um",
+                           graph_name = "ring1")
+```
+
+2.4.2. Adjust the scores for sequencing depth and mitochondrial fraction.
+
+```{r adjust}
+obj <- adjust_for_depth(obj, features = cats)
+adj <- paste0(cats, "_adj")
+```
+
+2.4.3. Calculate the spatial autocorrelation (Moran's I) of each matrisome category per section and summarise it per sample for comparison.
+
+```{r moran}
+moran <- section_morans_i(obj, features = adj, graph = "ring1", n_perm = 199)
+sample_moran <- summarise_by_lung(moran, features = adj)
+moran_stats <- permutation_test(sample_moran, features = adj, group = "condition")
+moran_stats
+```
+
+2.4.4. Plot the per-sample autocorrelation for each category (Figure 4C).
+
+```{r fig4c, fig.width = 8, fig.height = 6}
+plot_by_condition(sample_moran, features = adj)
+```
+
+## 2.5. Visualise the matrisome scores and collagen genes
+
+2.5.1. Pick one representative section each from the healthy control and the IPF samples.
+
+```{r sections}
+secs <- c("V19S23-092-A1", "V10T03-279-C1")
+```
+
+2.5.2. Plot the collagen, glycoprotein and proteoglycan scores in the selected sections (Figure 4D).
+
+```{r fig4d, fig.width = 5, fig.height = 4}
+lims <- c(collagens = 0.3, ecm_glycoproteins = 0.16, proteoglycans = 0.25)
+for (f in names(lims)) for (s in secs)
+  print(plot_spatial(subset(obj, section == s), feature = f, limits = c(0, lims[f])))
+```
+
+2.5.3. Calculate and plot the log2 fold change of the expression of each collagen gene in each sample compared with its average expression across the healthy control samples (Figure 4E).
+
+```{r fig4e, fig.width = 9, fig.height = 4}
+plot_heatmap(collagen_lfc(obj), center = 0, limits = c(-4, 4))
+```
+
+## 2.6. Map the matrisome scores to cell types
+
+2.6.1. Calculate the correlations between the cell type proportions and collagen score in each section.
+
+```{r coloc}
+cell_types <- grep("^prop_", colnames(obj[[]]), value = TRUE)
+coloc <- colocalisation(obj, features = c(cell_types, "collagens"))
+```
+
+2.6.2. Plot the average correlations for the control and IPF groups (Figure 5A).
+
+```{r fig5a, fig.width = 7, fig.height = 6}
+plot_heatmap(coloc$control, center = 0)
+plot_heatmap(coloc$ipf, center = 0)
+```
+
+2.6.3. Compare selected correlations between IPF and control using a permutation test and plot the results (Figure 5B).
+
+```{r fig5b}
+pairs <- c("prop_AT1~prop_AT2", "prop_Myofibroblasts~prop_HAS1_High_Fibroblasts", "collagens~prop_AT1")
+coloc_stats <- permutation_test(coloc$sample, features = pairs, group = "condition")
+coloc_stats
+plot_by_condition(coloc$sample, features = pairs)
+```
+
+## 2.7. Analyse matrisome pair co-expression
+
+2.7.1. Calculate the co-expression of each matrisome pair between neighbouring spots.
+
+```{r lr}
+obj <- score_lr_activity(obj, pairs = read.csv("cell_matrix_pairs.csv"), graph = "ring1", assay = "Spatial")
+```
+
+2.7.2. Rank and plot the co-expression of pairs that differ between IPF and control (Figure 5C).
+
+```{r fig5c, fig.width = 9, fig.height = 4}
+top <- rank_pairs(obj, min_coexpression = 0.05, max_per_ligand = 2, max_per_receptor = 3)
+plot_heatmap(top$lfc, center = 0, limits = c(-6, 6))
+```
+
+2.7.3. Select the two top-ranked pairs, test them against the pair selection repeated for every relabelling of the samples and plot the results (Figure 5D).
+
+```{r fig5d}
+pair_stats <- selection_test(top, pairs = top$pairs[1:2])
+pair_stats
+plot_by_condition(top$sample, features = top$pairs[1:2], p = pair_stats$p_value)
+```
+
+2.7.4. Make spatial plots of the distribution of AT1 and myofibroblast cell types as well as the co-expression of the top-ranked pair in one IPF and one control section (Figure 5E).
+
+```{r fig5e, fig.width = 5, fig.height = 4}
+obj <- add_pair_score(obj, ligand = "COMP", receptor = "ITGAV")
+lims <- c(prop_AT1 = 0.2, prop_Myofibroblasts = 0.25, COMP__ITGAV = 1.6)
+for (f in names(lims)) for (s in c("V19S23-092-A1", "V10T03-281-B1"))
+  print(plot_spatial(subset(obj, section == s), feature = f, limits = c(0, lims[f])))
+```
+
+## 2.8. Examine matrisome gene expression in normal-appearing alveoli
+
+2.8.1. Subset spots annotated as normal alveolar tissue by the pathologist.
+
+```{r alveoli}
+alv <- subset(obj, histology == "Normal Alveolar and Other")
+```
+
+2.8.2. Compare and plot the expression of COMP and CTHRC1 between IPF and control in these spots (Figure 5F).
+
+```{r fig5f}
+alv_expr <- summarise_by_lung(alv, features = c("COMP", "CTHRC1"))
+alv_stats <- permutation_test(alv_expr, features = c("COMP", "CTHRC1"), group = "condition")
+alv_stats
+plot_by_condition(alv_expr, features = c("COMP", "CTHRC1"))
+```
+
+## 2.9. Save workspace results
+
+2.9.1. Save the updated Seurat object and statistics results.
+
+```{r save}
+saveRDS(obj, "IPF_cohort_scored.rds")
+for (t in c("score_stats", "moran_stats", "coloc_stats", "pair_stats", "alv_stats"))
+  write.csv(get(t), paste0(t, ".csv"))
+```
+
+2.9.2. Save the R session information.
+
+```{r session}
+writeLines(capture.output(sessionInfo()), "sessionInfo.txt")
+```
