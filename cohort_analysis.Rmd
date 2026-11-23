@@ -163,13 +163,14 @@ plot_by_condition(coloc$sample, features = pairs)
 2.7.1. Calculate the co-expression of each matrisome pair between neighbouring spots.
 
 ```{r lr}
-obj <- score_lr_activity(obj, pairs = read.csv("cell_matrix_pairs.csv"), graph = "ring1", assay = "Spatial")
+obj <- score_matrisome_pair_coexpression(obj, pairs = read.csv("cell_matrix_pairs.csv"),
+                                         graph = "ring1", assay = "Spatial")
 ```
 
 2.7.2. Rank and plot the co-expression of pairs that differ between IPF and control (Figure 5C).
 
 ```{r fig5c, fig.width = 9, fig.height = 4}
-top <- rank_pairs(obj, min_coexpression = 0.05, max_per_ligand = 2, max_per_receptor = 3)
+top <- rank_pairs(obj, min_coexpression = 0.05, max_per_gene_1 = 2, max_per_gene_2 = 3)
 plot_heatmap(top$lfc, center = 0, limits = c(-6, 6))
 ```
 
@@ -184,7 +185,7 @@ plot_by_condition(top$sample, features = top$pairs[1:2], p = pair_stats$p_value)
 2.7.4. Make spatial plots of the distribution of AT1 and myofibroblast cell types as well as the co-expression of the top-ranked pair in one IPF and one control section (Figure 5E).
 
 ```{r fig5e, fig.width = 5, fig.height = 4}
-obj <- add_pair_score(obj, ligand = "COMP", receptor = "ITGAV")
+obj <- add_pair_score(obj, pair = "COMP__ITGAV")
 lims <- c(prop_AT1 = 0.2, prop_Myofibroblasts = 0.25, COMP__ITGAV = 1.6)
 for (f in names(lims)) for (s in c("V19S23-092-A1", "V10T03-281-B1"))
   print(plot_spatial(subset(obj, section == s), feature = f, limits = c(0, lims[f])))

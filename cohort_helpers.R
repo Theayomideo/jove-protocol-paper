@@ -118,12 +118,12 @@ colocalisation <- function(obj, features) {
 }
 
 # Rank pairs whose lung-level co-expression separates IPF from control.
-rank_pairs <- function(obj, min_coexpression = 0.05, max_per_ligand = 2, max_per_receptor = 3,
+rank_pairs <- function(obj, min_coexpression = 0.05, max_per_gene_1 = 2, max_per_gene_2 = 3,
                        n = 14, pseudocount = 1e-3) {
-  enr <- matrispace::find_lr_enrichment(obj, group_by = "section")
-  wide <- reshape(enr[, c("pair", "group", "mean_activity")], idvar = "group",
+  enr <- matrispace::find_matrisome_pair_enrichment(obj, group_by = "section")
+  wide <- reshape(enr[, c("pair", "group", "mean_coexpression")], idvar = "group",
                   timevar = "pair", direction = "wide")
-  names(wide) <- sub("^mean_activity\\.", "", names(wide))
+  names(wide) <- sub("^mean_coexpression\\.", "", names(wide))
   pairs <- setdiff(names(wide), "group")
   wide <- merge(unique(obj[[]][, design_cols]), wide, by.x = "section", by.y = "group")
   lung <- summarise_by_lung(wide, pairs)
@@ -134,12 +134,12 @@ rank_pairs <- function(obj, min_coexpression = 0.05, max_per_ligand = 2, max_per
   stats$separate <- apply(ipf, 2, min) > apply(ctrl, 2, max) | apply(ipf, 2, max) < apply(ctrl, 2, min)
   stats <- stats[stats$separate & pmax(stats$ctrl, stats$ipf) > min_coexpression & stats$lfc > 0, ]
   stats <- stats[order(-stats$lfc), ]
-  lig <- sub("__.*", "", stats$pair)
-  rec <- sub(".*__", "", stats$pair)
+  g1 <- sub("__.*", "", stats$pair)
+  g2 <- sub(".*__", "", stats$pair)
   chosen <- character(0)
   for (i in seq_len(nrow(stats))) {
-    if (sum(lig[match(chosen, stats$pair)] == lig[i]) >= max_per_ligand) next
-    if (sum(rec[match(chosen, stats$pair)] == rec[i]) >= max_per_receptor) next
+    if (sum(g1[match(chosen, stats$pair)] == g1[i]) >= max_per_gene_1) next
+    if (sum(g2[match(chosen, stats$pair)] == g2[i]) >= max_per_gene_2) next
     chosen <- c(chosen, stats$pair[i])
     if (length(chosen) == n) break
   }
@@ -173,11 +173,10 @@ selection_test <- function(top, pairs) {
             null_max = sort(null["n", ], decreasing = TRUE)[2])
 }
 
-# Copy the co-expression score of one pair into the metadata as LIGAND__RECEPTOR.
-add_pair_score <- function(obj, ligand, receptor) {
-  act <- matrispace::get_lr_activity(obj)
-  id <- matrispace:::.lr_pair_id(ligand, receptor)
-  obj[[paste(ligand, receptor, sep = "__")]] <- as.numeric(act[id, colnames(obj)])
+# Copy the co-expression score of one pair (GENE1__GENE2) into the metadata.
+add_pair_score <- function(obj, pair) {
+  act <- matrispace::get_matrisome_pair_coexpression(obj, names = "pair")
+  obj[[pair]] <- as.numeric(act[pair, colnames(obj)])
   obj
 }
 
@@ -215,72 +214,37 @@ y_label <- function(features) {
   "Expression"
 }
 
-theme_figure <- function() {
-  theme_classic(base_size = 11) +
-    theme(strip.background = element_blank(), strip.text = element_text(size = 10),
-          axis.text = element_text(colour = "black"), legend.position = "none")
-}
+condition_labels <- c(control = "Control", IPF = "IPF")
 
 # Box plots of lung-level values by condition, with exact permutation P values.
 plot_by_condition <- function(df, features, p = NULL) {
-  long <- do.call(rbind, lapply(features, function(f)
-    data.frame(feature = f, condition = df$condition, value = df[[f]])))
-  long$feature <- factor(long$feature, levels = features, labels = nice_label(features))
-  p <- p %||% permutation_test(df, features)$p_value
-  top <- tapply(long$value, long$feature, max)
-  span <- tapply(long$value, long$feature, function(v) diff(range(v)))
-  ann <- data.frame(feature = factor(nice_label(features), levels = nice_label(features)),
-                    y = top + 0.12 * span, label = sprintf("P = %.2g", p))
-  italic <- all(grepl("__", features)) || all(grepl("^[A-Z0-9]+$", features))
-  ggplot(long, aes(condition, value)) +
-    geom_boxplot(aes(fill = condition), width = 0.5, coef = Inf,
-                 outlier.shape = NA, colour = "black") +
-    geom_point(shape = 21, fill = "white", size = 2) +
-    geom_segment(data = ann, aes(x = 1, xend = 2, y = y, yend = y), inherit.aes = FALSE) +
-    geom_text(data = ann, aes(x = 1.5, y = y, label = label), vjust = -0.6, size = 3.3,
-              fontface = "italic", inherit.aes = FALSE) +
-    facet_wrap(~ feature, scales = "free_y", ncol = min(3, length(features)),
-               labeller = label_wrap_gen(width = 18)) +
-    scale_fill_manual(values = condition_colours) +
-    scale_x_discrete(labels = c(control = "Control", IPF = "IPF")) +
-    scale_y_continuous(expand = expansion(mult = c(0.05, 0.2))) +
-    labs(x = NULL, y = y_label(features)) +
-    theme_figure() +
-    theme(strip.text = element_text(face = if (italic) "italic" else "plain"))
+  matrispace::plot_sample_comparison(
+    df, features, group = "condition",
+    p_values = p %||% permutation_test(df, features)$p_value,
+    labels = nice_label, group_labels = condition_labels, colours = condition_colours,
+    y_label = y_label(features),
+    italic = all(grepl("__", features)) || all(grepl("^[A-Z0-9]+$", features)))
 }
 
-# MatriSpace heatmap with the figure palette (RdBu), labels and ordering.
-plot_heatmap <- function(data, scale_by = "none", center = "auto", limits = NULL, ...) {
+# MatriSpace heatmap with the figure colours, labels and ordering.
+plot_heatmap <- function(data, scale_by = "none", center = "auto", limits = NULL) {
   lims <- limits %||% attr(data, "limits") %||% if (scale_by == "row") c(-2, 2) else NULL
-  p <- matrispace::plot_heatmap(data, scale_by = scale_by, center = center, limits = lims,
-                                na_colour = "white", ...)
-  if (is.null(lims)) lims <- c(-1, 1) * max(abs(p$data$value), na.rm = TRUE)
-  legend <- attr(data, "legend") %||% if (scale_by == "row") "z-score" else "value"
-  italic <- attr(data, "italic") %||% ""
-  suppressMessages(p +
-    scale_fill_distiller(palette = "RdBu", limits = lims, oob = scales::squish,
-                         na.value = "white", name = legend) +
-    scale_x_discrete(labels = nice_label) + scale_y_discrete(labels = nice_label, limits = rev) +
-    theme(axis.text.x = element_text(angle = 45, hjust = 1, colour = "black",
-                                     face = if (italic == "x") "italic" else "plain"),
-          axis.text.y = element_text(colour = "black",
-                                     face = if (italic == "y") "italic" else "plain"),
-          legend.position = "bottom"))
+  italic <- switch(attr(data, "italic") %||% "", x = "columns", y = "rows", "none")
+  matrispace::plot_heatmap(
+    data, scale_by = scale_by, center = center, limits = lims, na_colour = "white",
+    colours = matrispace::palette_diverging(),
+    legend_title = attr(data, "legend") %||% if (scale_by == "row") "z-score" else "value",
+    row_labels = nice_label, column_labels = nice_label, italic = italic,
+    x_angle = 45, legend_position = "bottom")
 }
 
-# MatriSpace spatial map with the figure palette (reversed Spectral), title and 1 mm scale bar.
-plot_spatial <- function(object, feature, limits = NULL, point_size = 2.2, ...) {
-  p <- matrispace::plot_spatial(object, feature, limits = limits, point_size = point_size, ...)
-  if (is.null(limits)) limits <- c(0, max(p$data$value, na.rm = TRUE))
+# MatriSpace spatial map with the figure colours, title and a 1 mm scale bar.
+plot_spatial <- function(object, feature, limits = NULL, point_size = 2.2) {
   legend <- if (startsWith(feature, "prop_")) "Proportion" else
     if (grepl("__", feature)) "Co-expression" else "Signature score"
-  x1 <- max(p$data$x); y0 <- min(p$data$y) - 150
-  suppressMessages(p +
-    scale_colour_distiller(palette = "Spectral", limits = limits, oob = scales::squish,
-                           name = legend) +
-    annotate("segment", x = x1 - 1000, xend = x1, y = y0, yend = y0, linewidth = 1) +
-    annotate("text", x = x1 - 500, y = y0, label = "1 mm", vjust = -0.6, size = 3) +
-    labs(title = paste(nice_label(feature), nice_label(unique(object$lung)), sep = ", ")) +
-    theme(plot.title = element_text(size = 11, hjust = 0.5),
-          legend.position = "bottom"))
+  matrispace::plot_spatial(
+    object, feature, limits = limits, point_size = point_size, colour_scale = "spectral",
+    title = paste(nice_label(feature), nice_label(unique(object$lung)), sep = ", "),
+    legend_title = legend, scale_bar = 1000, legend_position = "bottom") +
+    theme(plot.title = element_text(size = 11, hjust = 0.5))
 }

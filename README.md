@@ -41,7 +41,10 @@ so that the published MatriSpace repository remains unchanged.
 The notebook follows protocol section 2 and produces the cohort plots, test
 results and R session information. `cohort_helpers.R` contains the donor-level
 summaries, permutation tests and figure settings. `cell_matrix_pairs.csv`
-contains the 1,297 pairs used for the co-expression analysis.
+contains the 1,297 matrisome pairs (`gene_1`, `gene_2`) used for the
+co-expression analysis. Each pair is scored as `gene_2` expression in a spot
+multiplied by `gene_1` expression in its neighbouring spots, with
+`score_matrisome_pair_coexpression()`.
 
 Values are averaged across spots within sections, sections within tissue blocks,
 and blocks within lungs. Each lung is one biological replicate. Spatial graphs
