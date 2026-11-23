@@ -1,4 +1,4 @@
-# Spatial Matrisome Profiling of Human Lung Fibrosis using MatriSpace
+# Spatial Matrisome Profiling of Fibrotic Human Lungs with MatriSpace
 
 This repository contains the scripts used for the MatriSpace protocol on human
 idiopathic pulmonary fibrosis (IPF). The protocol demonstrates analysis of an
