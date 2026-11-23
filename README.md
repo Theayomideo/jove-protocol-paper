@@ -7,9 +7,8 @@ of four IPF and four healthy control lungs using the R package.
 
 ## Data
 
-The processed data are deposited in Zenodo under the reserved DOI
+The processed data are deposited in Zenodo at
 [10.5281/zenodo.24451144](https://doi.org/10.5281/zenodo.24451144).
-The record is a draft and the files will become available when it is published.
 
 - `IPF_single_section.rds`: the IPF section used in the web workflow, containing
   4,488 spots, the tissue image and cell type annotations.
